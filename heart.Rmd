@@ -1,0 +1,376 @@
+---
+title: "LDA CLASSIFICATION"
+output: pdf_document
+date: "-"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Dataset 
+Il dataset è stato scaricato da UCI: Machine learning repository, il dataset originale contiene 76 attributi, ma tutti gli esperimenti pubblicati fanno riferimento all'utilizzo di un sottoinsieme di 14 di essi. È possibile scaricare 4 possibili database: Cleveland, Ungheria, Svizzera e VA Long Beach. In questa trattazione verrà utilizzato il database Cleveland, poichè è l'unico che è stato utilizzato dai ricercatori ML fino ad oggi. 
+Le unità (pazienti) presenti nel dataset sono 303 e le variabili considerate sono le seguenti:
+
+- *age*: età del paziente
+- *sex*: sesso (1 = uomo, 0= donna)
+- *cp*: tipo di dolore toracico (valore 1: angina tipica; 2:angina atipica; 3: dolore non toracico; 4: asintomatico)
+- *trestbps*: pressione arteriosa a riposo (in mm/Hg al momento del ricovero in ospedale)
+- *chol*: colestorale sierico in mg/dl
+- *fbs*: glicemia a digiuno (se > 120 mg/dl ci sarà l'etichetta 1, altrimenti 0)
+- *restecg*: risultati elettrocardiografici a riposo (0: valore normale; 1: anormalità dell'onda ST-T; 2: probabile ipertrofia ventricolare sinistra)
+- *thalach*: frequenza cardiaca massima raggiunta
+- *exang*: angina indotta da esercizio (1 = vero; 0 = falso)
+- *oldpeak*: sottoslivellamento ST indotto dall'esercizio rispetto al riposo
+- *slope*: la pendenza del picco del segmento ST durante l'esercizio (Valore 1: ascendente; Valore 2: piatto; Valore 3: discendente)
+- *ca*: numero di vasi maggiori (0-3) colorati da fluoroscopia
+- *thal*: 3 = normale; 6 = difetto risolto; 7 = difetto reversibile
+
+L'obiettivo è prevedere la presenza di malattie cardiache nel paziente. Nel dataset la variabile risposta è denominata *num* ed è un valore intero da 0 (nessuna presenza) a 4. L'obiettivo può riguardare anche semplicemente distinguere la presenza (valori 1,2,3,4) dall'assenza (valore 0).
+
+Prima di procedere con l'applicazione degli algoritmi di classificazione, effettuo una breve analisi esplorativa.
+
+### Library
+```{r}
+library(plyr)
+library(dplyr)
+library(psych)
+library(mlbench)
+library(caret)
+library(AppliedPredictiveModeling)
+library(MASS)
+library(pROC)
+library(ROCR)
+library(ggord)
+```
+
+####  Analisi esplorativa sul dataset
+Carichiamo il dataset:
+```{r}
+df <- read.csv("~/Desktop/statistical learning/heart_cleveland.csv", sep=";")
+head(df)
+```
+```{r}
+str(df)
+```
+```{r}
+sum(is.na(df))
+```
+Sono presenti 6 dati mancanti, contenute nelle variabili ca e thal.
+```{r}
+names(which(colSums(is.na(df))>0))
+```
+``` {r}
+table(df$ca)
+```
+Le variabili contenenti dati mancanti sono discrete. Nel caso della variabile *ca* essa può assumere valore: 0,1,2,3 e 4. La frequenza maggiore riguarda il valore 0 (a 176 pazienti non si è colorato nessun vaso in seguito alla fluoroscopia). Quattro pazienti non hanno nessun valore, si presume dunque che ancora non siano stati sottoposti all'esame radiologico della fluoroscopia. Sostituire i valori NA con il valore 0, non sembra un'ottima soluzione in quanto 0 indica che nessun vaso si è colorato. Per la variabile *thal* si potrebbe fare un discorso analogo. Per tale ragione, anche se perdiamo informazioni, eliminiamo queste osservazioni contenenti dati mancanti.
+```{r}
+df <- na.omit(df) 
+sum(is.na(df))
+```
+Infine, abbiamo detto che possiamo trattare la variabile risposta come dicotomica (1= presenza di malattie cardiache; 0= assenza). Quindi, creiamo una nuova variabile (colonna) in cui i valori 1,2,3,4 della variabile *num* sono sostituiti con il valore 1.
+```{r}
+df_10<-df  %>%
+   mutate(Class = case_when(num ==1 ~ 1,
+                            num ==2 ~ 1,
+                            num ==3 ~ 1,
+                            num ==4 ~ 1,
+                            TRUE ~ 0))
+```
+Adesso nel dataframe df_10 abbiamo 15 variabili, è presente la variabile Class appena creata. Nel dataset denominato "df_10" eliminiamo la colonna 14 (*num*).
+```{r}
+df_10<-df_10[,-14]
+head(df_10)
+```
+Dividiamo il dataset df_10 (dove la variabile class contiene solamente due classi) in training set e test set.
+```{r}
+set.seed(1998)
+training.samples = createDataPartition(df_10$Class, p = .8, list = FALSE)
+train.data <- df_10[training.samples, ]
+test.data <- df_10[-training.samples, ]
+```
+Il training set contiene 238 osservazioni e il test set 59.
+
+### LDA
+Ricordiamo che l'analisi discriminante può avvenire secondo due approcci: geometrico (ADL di Fisher) o probabilistico. Nell'analisi discriminante di Fisher si ricerca una combinazione lineare delle variabili esplicative con l'obiettivo di massimizzare la separazione dei gruppi e ottenere una nuova variabile detta *variabile canonica* (sulla quale verranno proiettate le osservazioni ed i rispettivi baricentri dei gruppi). Il numero massimo di variabili canoniche che si possono ottenere è dato dal min(p, G-1). Nel nostro caso p=13 e G=2 (in df_10). Quindi si potrà ottenere solamente una variabile canonica. Infine, l'osservazione verrà assegnata al gruppo la cui media risulta più vicina all'osservazione.
+Nell'approccio probabilistico, ogni osservazione verrà assegnata alla classe con la più elevata probabiltà a posteriori (calcolato considerando la probabilità a priori di appartenere ad una popolazione).
+
+```{r}
+heart_lda<-lda(Class ~ ., data= train.data)
+heart_lda
+```
+Per eseguire l'LDA usiamo la funzione lda() del package MASS. Nella formula specifichiamo la variabile risposta categoriale (Class) ed i predittori da usare, in data indichiamo il dataset contenente i dati. 
+
+Nell'output ottenuto:
+
+- *Prior probabilities of groups*: indica la specificazione delle probabilità a priori ($\pi_1$,$\pi_2$). Non essendo specificata nella formula, verrà calcolata come frequenza relativa delle classi nel training. 
+
+```{r}
+table(train.data$Class)
+```
+$$\pi_1= 109/238=0.4579832$$
+Indica la probabilità a priori, che un valore osservato provenga dalla popolazione 1 (e sia etichettato come 1 <- presenza di malattie cardiache).
+$$\pi_2= 129/238=0.5420168$$
+Indica la probabilità a priori, che un valore osservato provenga dalla popolazione 2 (e sia etichettato come 0 <- assenza di malattie cardiache)
+
+- *Group means*: abbiamo la media di ogni variabile in ogni gruppo. Ad esempio gli individui con malattie cardiache hanno una media di 56 anni rispetto ai 54 nel gruppo etichettato come 0.
+
+- *Coefficients of linear discriminants*: questi sono gli autovettori ($\alpha$). È presente una sola variabile canonica perchè i gruppi sono due. Quindi la mia variabile canonica sarà data dalla combinazione lineare delle x, come segue:
+
+$$LD1= (-0.005494066*age)+(0.552216442*sex)+...+(0.286266164*thal)$$
+Adesso visualizzo la performance sul training set, utilizzando il comando predict.
+
+```{r}
+prev_train_lda<-predict(heart_lda, train.data)
+prev_train_lda$class[10:20]
+```
+Ad esempio se prendo i soggetti dal decimo al ventesimo, notiamo che ai pazienti 11, 18 e 19 è stata prevista la presenza di malattie cardiache. Per vedere la probabilità a posteriori richiamo $posterior.
+
+```{r}
+prev_train_lda$posterior[10:20,]
+```
+L'11esimo soggetto è stato classificato come 1 con la probabilità a posteriori del 75.2%. Il 13esimo paziente ha invece una probabilità di appartenere al gruppo 0 dell'84.6. Va specificato che in questo caso la threshold è posta a 0.5, quindi un soggetto con una probabilità superiore alla soglia verrà etichettato come 1. Credo, che in questo contesto alzare la soglia non ha molto senso, poichè è preferibile effettuare ulteriori esami ipotizzando la presenza di malattie cardiache piuttosto che non approfondire.
+
+Adesso, il modello stimato lo utilizziamo sul test set.
+```{r}
+prev_test_lda<-predict(heart_lda, test.data, type="prob")
+head(prev_test_lda$class)
+```
+Anche in questo caso vediamo come sono stati classificati i primi elementi e osserviamo che per il primo soggetto appartenente al test set si prevede la presenza di malattie cardiache, con una probabilità del 99%.
+
+```{r}
+head(prev_test_lda$posterior)
+```
+Attraverso l'istagramma in pila è possibile verificare la separazione tra i gruppi usando LD1.
+```{r}
+ldahist(data = prev_test_lda$x[,1], g = test.data$Class)
+```
+
+Notiamo che i due gruppi sono un pò separati ma tendono ad esserci delle sovrapposizioni.
+
+#### CONFUSION MATRIX
+
+A questo punto posso costruire la matrice di confusione, con il comando confusionMatrix del pacchetto caret. Nella matrice di confusione, effettuaiamo il confronto tra i valori previsti e quelli reali.
+
+```{r}
+x<-as.factor(test.data$Class)
+confusionMatrix( data = prev_test_lda$class, reference = x, positive = "1")
+```
+In alto vi è la matrice di confusione e si nota:
+
+- *TP=22*: il numero di unità previste con label 1 e che effettivamente nel collettivo hanno malattie cardiache.
+- *TN=27*: il numero di unità previste con label 0 e che effettivamente nel collettivo non hanno malattie cardiache
+- *FP=4* : coloro a cui è stata prevista una label pari ad 1, ma in realtà hanno una label pari a 0.
+- *FN=6* : coloro a cui è stata prevista una label pari a 0, ma in realtà hanno una label pari ad 1 (cioè in realtà hanno malattie cardiache).
+
+In seguito alla matrice di confusione sono riportate alcune metriche:
+
+- *accuratezza*: è data dal rapporto tra gli elementi sulla diagonale principale e il numero totale di osservazioni. 
+```{r}
+acc<-(22+27)/59
+acc
+```
+Indica, dunque, che l'85% circa delle unità sono state correttamente classificate.
+
+- *no information rate*: indica la proporzione maggiore delle classi osservate ( in questo caso essendo pari a 0.52 la presenza di dati appartenenti alla classe 0 è piuttosto simile rispetto al numero di dati appartenenti alla classe 1). 
+- *P-Value [Acc > NIR]*: il p-value sarebbe quello di un chi-quadro (come se trattassi la matrice di confidenza come una tabella di contingenza). Se l'indice è 0 è come se le y fossero indipendente dalle x (accetto l'ipotesi nulla di indipendenza dei dati dai predittori). Se il test è significativo (come in questo caso), rifiuto l'ipotesi nulla. 
+- *Kappa*: più il valore è vicino ad 1 più il classificatore sarà performante. E' calcolato come:
+
+```{r}
+a<- (22+4)/59
+b<- (22+6)/59
+p_yes<- a*b
+c<- (27+6)/59
+d<- (27+4)/59
+p_no<-c*d
+p_e<-p_yes+p_no
+k<-(acc-p_e)/(1-p_e)
+k
+```
+- *McNemar's Test P-Value*: Il test di McNemar controlla se i disaccordi tra evento e non evento coincidono.  Cioè è come se prendesse in considerazione i falsi negativi e falsi positivi della matrice di confusione (0/1 e 1/0). Il test controlla se c'è una differenza significativa tra i conteggi in queste due celle. Se i conteggi sono simili, vuol dire che gli errori sono commessi nella stessa proporzione. Quindi, il risultato del test non è significativo.
+- *Sensitività*: il numero di positivi correttamente classificati.
+```{r}
+22/(22+6)
+```
+- *Specificità*: numero di negativi correttamente classificati.
+```{r}
+27/(27+4)
+```
+Va specificato che vi è un trade-off tra sensitività e specificità. Cioè l'aumento della prima, comporta la diminuzione della seconda e viceversa.
+
+- *Pos Pred Value*: indica la probabilità che un risultato positivo del test corrisponda alla reale presenza della malattia, quindi ad una vera positività. 
+- *Neg Pred Value*: è la probabilità che un risultato negativo del test corrisponda ad una vera negatività (reale assenza di malattia cardiaca).
+In un contesto medico, credo abbia senso cercare di ottenere un più alto valore di NPV, in modo tale da essere il più certi possibile che coloro ritenuti sani lo siano realmente.
+
+- *prevalenza*: il rapporto tra le unità che hanno effettivamente label pari ad 1 ed n (l'abbiamo usato nel calcolo di K).
+- *Detection Rate*: il numero di eventi (classe 1) classificati correttamente sul totale.
+- *Detection Prevalence*: il rapporto tra il numero di pazienti previsti come 1 sul totale (anche questo è stato usato nel calcolo di K).
+- *Balanced Accuracy*: il balanced accuracy (detto anche F1) è la media armonica della sensitività e specificità.
+
+#### ROC CURVE
+
+Nel caso dell'LDA sappiamo che un soggetto viene assegnato ad una popolazione piuttosto che all'altra in base alla probabilità a posteriori di appartenere ad essa. Generalmente viene imposta una threashold (default = 0.5), se la probabilità a posteriori sarà superiore a questa soglia il soggetto verrà assegnato alla popolazione 1; altrimenti verrà etichettato come 0. Ovviamente, il valore della soglia può essere modificato tenendo conto che non è possibile massimizzare sensitività e specificità contemporaneamente e considerando anche il problema di riferimento. Nel nostro caso, presumo sia più opportuno minimizzare il numero di falsi negativi (coloro che prevediamo essere privi di malattie cardiache ma in realtà sono malati) piuttosto che di falsi positivi. In questo modo, verrebbero eseguiti ulteriori controlli sul paziente in modo da prevenire o accorgersi in tempo di eventuali patologie. D'altro canto non avrebbe senso neanche prevedere tutti come positivi ed effettuare ulteriori accertamenti su tutti i pazienti, poichè questo richiederebbe ovviamente dei costi. Dunque la curva ROCR ci permette di trovare un compromesso tra sensitività e specificità.
+```{r}
+pred <- prediction(prev_test_lda$posterior[,"1"], test.data$Class) 
+roc_ROCR <- ROCR::performance(pred, "tpr", "fpr")
+plot(roc_ROCR, main = "ROC curve", colorize = T, xlab="1-Specificity", ylab="Sensitivity" )
+abline(a = 0, b = 1)
+```
+Notiamo che sulle ascisse è posta 1-specificità, desideriamo sia il più piccolo possibile. Sulle ordinate, invece, è presente la sensitività che vogliamo sia il più alto possibile. Un modello completamente efficace sarebbe quello in cui la curva coincidesse con i lati del triangolo superiore (perchè non verrebbe commesso nessun errore). Invece più si avvicina alla bisettrice in nero, più vuol dire che il classificatore si comporterebbe in modo casusale. Quindi, l'obiettivo è allontanarsi dalla bisettrice, nel nostro caso la curva è quasi prossima ai cateti del triangolo, quindi il classificatore sembra performare bene. Probabilmente, nel caso sopra riportato sarebbe più conveniente scegliere una soglia più bassa, ad esempio in corrispondenza del colore verde-azzurro. Ovviamente abbassando la soglia è vero che aumenteranno i TP, ma aumenteranno anche i FP.
+
+```{r}
+perf.2<-ROCR::performance(pred,measure="auc",fpr.stop=0.4)
+auc_ROCR <- ROCR::performance(pred, measure = "auc")
+auc_ROCR <- auc_ROCR@y.values[[1]]
+auc_ROCR
+```
+In questo modo calcolo l'AUC, ponendo una threashold pari a 0.4  ho una combinazione di fpr e tpr che mi da un'area sotto la curva pari a 0.94 circa. Ricordando che un modello le cui previsioni sono tutte errate avrà un AUC di 0, viceversa se le previsioni sono tutte corrette l'AUC sarà pari a 1.
+
+
+In realtà nell'LDA il vettore x (delle variabili indipendenti) si ipotizza che si distribuisca come una normalità multivariata. E quindi le variabili indipendenti provengono da una distribuzione normale. Per cercare di visualizzare la distribuzione di una variabile utilizziamo i grafici di densità.
+
+```{r}
+par(mfrow=c(2, 3))
+colnames <- dimnames(df)[[2]]
+for (i in 1:5) {
+    d <- density(df[,i])
+    plot(d, type="n", main=colnames[i])
+    polygon(d, col="red", border="blue")
+}
+```
+
+Sappiamo che i grafici di densità sono utili per le variabili continue, questo possiamo notarlo osservando la variabile sex o cp, che sappiamo essere discrete. 
+
+Adesso, stimiamo il modello LDA sul training set e lo testiamo sul test set utilizzando però come predittori solamente le variabili continue.
+
+```{r}
+heart_lda1<-lda(Class ~ trestbps+chol+thalach+oldpeak, data= train.data)
+heart_lda1
+```
+Anche in questo caso abbiamo solo una variabile canonica, poichè il numero di gruppi è sempre due. Quindi avremo G-1=1.
+```{r}
+prev_test_lda1<-predict(heart_lda1, test.data,type = "p")
+head(prev_test_lda1$class)
+```
+Le due prime unità del test set sono classificate come 1.
+```{r}
+head(prev_test_lda1$posterior)
+```
+La prima con una probabilità a posteriori pari a 0.9 e la seconda con una probabilità pari a 0.53. Questo è un caso che ci permette di capire l'importanza della threashold, poichè essendo di default posta a 0.5, in questo caso è vero che il paziente è stato classificato con la label 1, ma l'incertezza di previsione è  molto alta, perchè essendo la threashold= 0.5 si tratta quasi di un caso limite. Un discorso analogo può essere fatto con il 5 paziente, questa volta classificato come 0 con una probabilità del 51.2% circa; probabilmente in un caso del genere sarebbe stato più opportuno effettuare ulteriori accertamenti e valutare se effettivamente si tratta di un paziente con malattie cardiache o meno.
+```{r}
+confusionMatrix( data = prev_test_lda1$class, reference = x, positive = "1")
+```
+A differenza di prima, l'accuratezza del modello diminuisce, sicuramente per l'aumento dei falsi negativi che ammonta a 13 (prima FP=6). Questo, ovviamente si ripercuote in un minor valore della sensitività. Probabilmente in questo caso sarebbe opportuno abbassare il valore della soglia, in modo tale da diminuire il numero di falsi negativi. Visualizziamo per tale ragione la curva ROC:
+
+```{r}
+pred1 <- prediction(prev_test_lda1$posterior[,"1"], test.data$Class) 
+roc_ROCR1 <- ROCR::performance(pred1, "tpr", "fpr")
+plot(roc_ROCR1, main = "ROC curve", colorize = T, xlab="1-Specificity", ylab="Sensitivity" )
+abline(a = 0, b = 1)
+```
+Anche dalla curva ROC appare evidente che il modello performa in modo peggiore rispetto al precedente, infatti si è allontanata dai cateti del triangolo superiore per avvicinarsi alla bisettrice. Questo è dovuto sicuramente all'assenza di qualche variabile esplicativa strettamente legata con la variabile di interesse, anche osservando il valore del P-Value [Acc > NIR] nelle statistiche della matrice di confusione, ci rendiamo conto che il valore è decisamente più alto rispetto a prima.
+Dalla curva ci rendiamo conto che per ottenere un numero inferiore di FN si potrebbe abbassare la soglia portandola fino a circa 0.3 (parte azzurra). Ovviamente, aumenterà anche il numero di falsi positivi.
+
+Abbassiamo la soglia e visualizziamo la nuova matrice di confusione.
+
+```{r}
+pdata <- as.data.frame(prev_test_lda1)
+pdata$my_custom_predicted_class <- ifelse(pdata$posterior.1 > .30, 1, 0)
+a<-as.factor(pdata$my_custom_predicted_class)
+confusionMatrix(data = a, reference = x, positive = "1")
+```
+Come ci aspettavamo il numero di falsi negativi si è ridotto (FN=6) ed è aumentato il numero di FP=12. L'accuratezza del modello è identica alla precedente, ma il valore della sensitività è aumentato (ovviamente quello della specificità è diminuito). Tuttavia, per il ragionamento sostenuto in precedenza sarebbe preferibile una soglia più bassa poichè è preferibile minimizzare il numero di falsi negativi piuttosto che i falsi positivi.
+
+### LDA MULTICLASSE
+
+In questo caso non considereremo come variabile di classificazione "Class" che assume valore 0,1; ma prenderemo come riferimento la variabile *num*, che può assumere 5 classi (da 0 a 5 in base alla gravità della malattia cardiaca presente, 0 indica l'assenza).
+
+Dividiamo in training e test set il dataset denominato df (contenente la variabile *num*).
+```{r}
+set.seed(1998)
+training.samples1 = createDataPartition(df$num, p = .8, list = FALSE)
+train.data1 <- df[training.samples, ]
+test.data1 <- df[-training.samples, ]
+```
+Eseguiamo l'LDA:
+```{r}
+heart_lda_num<-lda(num ~ ., data= train.data1)
+heart_lda_num
+```
+In questo caso per ogni gruppo avrò la probabilità a priori di appartenere ad esso. In seguito ci sarà la media di ogni variabile per ogni gruppo. In questo caso avremo 4 variabili canoniche, poiche G-1=4 (il numero di p=13).
+Effettuiamo la previsione sul test set.
+```{r}
+prev_test_lda_num<-predict(heart_lda_num, test.data1)
+prev_test_lda_num$class[1:11]
+```
+La prima unità del test set è stata assegnata al gruppo 3 (si presume abbia una malattia cardiaca abbastanza grave). La decima unità è stata, invece, assegnata al gruppo 1.
+Visualizziamo con quale probabilità sono state assegnate (le probabilità sono state arrotondate alla 5 cifra decimale):
+```{r}
+round(prev_test_lda_num$posterior[1:11,], digits = 5)
+```
+Ad esempio, la prima unità è stata classificata come 3 con una probabilità a posteriori del 63.5%; la seconda è stata classificata come 0 con una probablità del 93%.
+Visualizziamo la matrice di confusione:
+```{r}
+x1<-as.factor(test.data1$num)
+confusionMatrix( data = prev_test_lda_num$class, reference = x1, positive = "...")
+```
+Notiamo che l'accuratezza del modello è inferiore rispetto ai casi precedenti. In linea generale si nota che tutte le statistiche assumono valori abbastanza bassi, ad eccezione delle statistiche calcolate per la classe 0 che risultano abbastanza elevate.
+
+Come detto in precedenza in questo caso è stato possibile ottenere 4 variabili canoniche. Attraverso il pacchetto ggplot è possibile ottenere un LDA PLOT, dove sugli assi abbiamo le prime due variabili canoniche.
+```{r}
+y<-as.factor(train.data1$num)
+lda.data_num <- cbind(train.data1, predict(heart_lda_num)$x)
+ggplot(lda.data_num, aes(LD1, LD2))+
+  geom_point(aes(color = y))
+```
+Dal grafico ci rendiamo conto che solo la classe 0 è abbastanza separata dalle altre, le classi 1,2,3 e 4 risultano abbastanza sovrapposte tra loro. Per tale ragione le statistiche più alte sono registrate sulla classe 0.
+
+```{r}
+ggord(heart_lda_num, y)
+```
+
+Anche con questa rappresentazione è abbastanza evidente che i gruppi tendono a sovrapporsi.
+
+### QDA
+Nell'analisi discriminante lineare, assumiamo che le matrici di varianza e covarianza delle classi siano uguali. Nell'analisi discriminante quadratica invece supponiamo che le matrici di varianza e covarianza siano diverse. In questo caso la funzione che utilizzeremo sarà qda e gli argomenti sono analoghi a quelli dell'lda.
+L'analisi verrà svolta sul df_10 dataset:
+
+```{r}
+heart_qda <- qda(Class ~ ., data = train.data)
+heart_qda
+```
+Adesso, possiamo testare il modello sul test set:
+```{r}
+prev_test_qda<-predict(heart_qda, test.data, type="prob")
+head(prev_test_qda$class)
+```
+La prima unità è stata classificata come 1, con una probabilità del 99%.
+```{r}
+head(prev_test_qda$posterior)
+```
+Visualizziamo la matrice di confusione e le statistiche:
+```{r}
+x<-as.factor(test.data$Class)
+confusionMatrix( data = prev_test_qda$class, reference = x, positive = "1")
+```
+Il modello ha un'accuratezza dell'89.83%, anche i valori di sensitività e specificità risultano abbastanza alti, infatti solo 6 osservazioni sono erroneamente classificate. Se lo confrontiamo con il risultato ottenuto sul medesimo dataset (train.data e test.data), notiamo che il classificatore quadratico performa meglio rispetto al classificatore lineare.
+
+Visualizziamo la ROC curve:
+
+```{r}
+pred <- prediction(prev_test_qda$posterior[,"1"], test.data$Class) 
+roc_ROCR <- ROCR::performance(pred, "tpr", "fpr")
+plot(roc_ROCR, main = "ROC curve", colorize = T, xlab="1-Specificity", ylab="Sensitivity" )
+abline(a = 0, b = 1)
+```
+
+Anche dalla ROC curve si può osservare che il modello risulta performante, poichè la curva è molto vicina ai cateti del triangolo superiore. 
+
+
+#### FONTE DATASET
+
+<https://archive.ics.uci.edu/ml/datasets/heart+disease>
+
+
+
+
