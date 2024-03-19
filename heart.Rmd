@@ -1,5 +1,6 @@
 ---
 title: "LDA CLASSIFICATION"
+author: "Dibernardi Rosy"
 output: pdf_document
 date: "-"
 ---
